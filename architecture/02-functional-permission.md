@@ -75,6 +75,9 @@ fields:
       enable: true
       type: "partial"                # partial | full | regex
       pattern: "***"
+      masking_side: "backend"        # backend（推荐）| frontend
+                                     # backend：API 响应前替换字段值，防止抓包泄露
+                                     # frontend：仅视觉屏蔽，不保证数据安全
       
   - code: "field_customer_phone"
     name: "客户电话"
@@ -84,11 +87,13 @@ fields:
       type: "regex"
       match_pattern: "(\d{3})\d{4}(\d{4})"  # 正则匹配原始值
       replace_with: "$1****$2"               # 替换后的显示格式（手机号脱敏：138****8888）
+      masking_side: "backend"
       
   - code: "field_cost_price"
     name: "成本价"
     page_code: "page_order_detail"
-    visible_roles: ["role_finance"]   # 仅财务可见
+    # 通过权限码控制可见性，与其他字段保持一致
+    # 运行时仅拥有 field_cost_price 权限码的角色可见
 ```
 
 **脱敏类型说明：**
@@ -98,6 +103,8 @@ fields:
 | `partial` | 部分脱敏 | 138****8888 |
 | `full` | 完全脱敏 | *********** |
 | `regex` | 正则脱敏 | `match_pattern` 匹配原始值，`replace_with` 定义替换结果 |
+
+> **安全建议**：涉及敏感数据（手机号、身份证、金额等）的脱敏字段必须使用 `masking_side: backend`，在 API 响应序列化阶段完成替换，防止原始数据通过网络传输被抓包获取。`frontend` 模式仅适用于低敏感度的视觉提示场景。
 
 ### 1.4 API级权限 (API)
 
@@ -136,7 +143,17 @@ roles:
           - "btn_order_delete"
         remove:                       # 移除的权限
           - "btn_order_export"
+
+  - code: "role_finance"
+    name: "财务"
+    source: "template:role_viewer"
+    extends:
+      functional:
+        add:
+          - "field_cost_price"        # 财务角色额外拥有成本价字段权限
 ```
+
+> **注意**：字段可见性统一通过权限码控制，不使用 `visible_roles` 直接绑定角色名。所有权限分配均在运行时角色配置中完成，保持权限检查逻辑的一致性。
 
 ### 2.2 多角色权限合并规则
 
@@ -159,23 +176,68 @@ boolean hasPermission = userPermissions.contains(permissionCode);
 │  用户请求    │
 └──────┬──────┘
        ↓
+┌─────────────┐     ┌──────────────────────┐
+│ 解析权限码   │────→│  查询缓存 (Redis)     │ cache key: perm:{userId}
+│             │     │  TTL: 5分钟           │
+└──────┬──────┘     └──────────┬───────────┘
+       │                        │
+       │ cache miss              │ cache hit
+       ↓                        ↓
+┌─────────────┐          ┌─────────────┐
+│ singleflight │          │  权限校验   │
+│ 防击穿（同   │          │  通过/拒绝  │
+│ key只查一次）│          └─────────────┘
+└──────┬──────┘
+       ↓
+┌─────────────┐
+│ 查询用户角色 │
+│ 合并权限码   │
+└──────┬──────┘
+       ↓
 ┌─────────────┐     ┌─────────────┐
-│ 解析权限码   │────→│  查询缓存   │
-│             │     │ (Redis)     │
-└──────┬──────┘     └──────┬──────┘
-       │                    │
-       │ cache miss          │
-       ↓                    ↓
-┌─────────────┐     ┌─────────────┐
-│ 查询用户角色 │────→│ 合并权限码   │
-│             │     │             │
-└──────┬──────┘     └──────┬──────┘
-       │                    │
-       ↓                    ↓
-┌─────────────┐     ┌─────────────┐
-│  写入缓存   │     │  权限校验   │
-│             │     │  通过/拒绝  │
+│  写入缓存   │────→│  权限校验   │
+│  TTL: 5分钟 │     │  通过/拒绝  │
 └─────────────┘     └─────────────┘
+```
+
+### 3.1 缓存失效策略
+
+权限缓存通过两种机制保持一致性：
+
+**① 主动失效（事件驱动）**
+
+管理员执行以下操作时，发布权限变更事件，异步清除对应缓存：
+
+| 操作 | 清除范围 |
+|------|----------|
+| 修改角色权限 | 该角色下所有用户的缓存 |
+| 用户角色变更 | 该用户的缓存 |
+| 发布新版本权限模板 | 应用下所有用户的缓存 |
+
+```java
+// 事件驱动清除示例
+@EventListener
+public void onRolePermissionChanged(RolePermissionChangedEvent event) {
+    List<String> userIds = userRoleService.getUsersByRole(event.getRoleCode());
+    userIds.forEach(uid -> redisCache.delete("perm:" + uid));
+}
+```
+
+**② 被动过期（TTL 兜底）**
+
+- 权限缓存 TTL 设为 **5 分钟**，防止主动失效遗漏时长期使用旧缓存
+- 对安全要求极高的场景（如金融审批），可将 TTL 缩短至 **1 分钟**
+
+**③ 缓存击穿防护（Singleflight）**
+
+同一用户的权限 cache miss 时，多个并发请求只允许一个查询数据库，其余等待结果共享：
+
+```java
+// 使用 Guava Striped 或 Spring Cache 的 sync=true 实现
+String permissions = permissionCache.get("perm:" + userId, key -> {
+    // 只有一个线程执行，其他等待
+    return loadPermissionsFromDB(userId);
+});
 ```
 
 ## 4. 前端权限集成
