@@ -5,7 +5,19 @@
 ### 1.1 维度类型定义
 
 ```yaml
-# 数据权限配置 DSL（应用级别，每个应用独立一份）
+# 数据权限配置 DSL（应用配置期生成，应用运行期分配）
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  生成阶段：应用配置期（Config Space）                            │
+# │  - 使用方：应用开发者、实体设计师                                 │
+# │  - 操作：定义数据维度、设计数据规则模板、标记实体字段             │
+# │  - 输出：本 DSL 文件，描述该应用有哪些数据规则可用                │
+# │                                                                 │
+# │  分配阶段：应用运行期（Runtime）                                 │
+# │  - 使用方：运营管理员、权限管理员                                 │
+# │  - 操作：基于本 DSL 中的数据规则，为角色配置数据权限范围          │
+# │  - 存储：角色-数据规则绑定关系存入权限服务数据库                   │
+# └─────────────────────────────────────────────────────────────────┘
+
 app_id: "app_crm"                    # 应用唯一标识（租户键）
 
 data_permissions:
@@ -178,9 +190,14 @@ roles:
 | `custom` | 自定义规则 | 特殊业务场景 |
 | `none` | 无数据权限 | 待分配角色 |
 
-### 4.2 规则绑定
+### 4.2 规则绑定（应用运行期配置）
 
 ```yaml
+# 角色数据权限配置（应用运行期 Runtime）
+# - 使用方：运营管理员、权限管理员
+# - 数据来源：基于配置期生成的 data_rules 中的 id 进行分配
+# - 操作：为每个角色配置各实体的数据权限范围（绑定具体规则）
+
 roles:
   - code: "role_sales_rep"
     name: "销售代表"
@@ -188,13 +205,28 @@ roles:
       data:
         strategy: "rule_based"
         rules:
-          - entity: "order"           # 实体编码
-            rule: "rule_self_only"    # 规则编码
-            operations: ["READ", "WRITE"]  # 操作类型
+          # 从上方 data_rules 中选取规则 id，指定操作类型
+          - entity: "order"
+            rule: "rule_self_only"         # 引用数据规则 id
+            operations: ["READ", "WRITE"]   # 对自己的订单可读可写
 
           - entity: "customer"
             rule: "rule_dept_only"
-            operations: ["READ"]       # 仅查看客户，不允许修改
+            operations: ["READ"]            # 仅查看本部门客户，不允许修改
+
+  - code: "role_sales_manager"
+    name: "销售经理"
+    permissions:
+      data:
+        strategy: "rule_based"
+        rules:
+          - entity: "order"
+            rule: "rule_dept_and_sub"      # 管理部门及子部门订单
+            operations: ["READ", "WRITE"]
+
+          - entity: "customer"
+            rule: "rule_dept_only"
+            operations: ["READ", "WRITE"]   # 可维护本部门客户
 
   - code: "role_finance_auditor"
     name: "财务审核"
@@ -203,11 +235,16 @@ roles:
         strategy: "rule_based"
         rules:
           - entity: "order"
-            rule: "rule_pending_audit"    # 待审核订单
-            operations: ["READ", "WRITE"]  # 可读可改（审批通过/拒绝）
+            rule: "rule_pending_audit"     # 待审核订单（需在 data_rules 中定义）
+            operations: ["READ", "WRITE"]   # 可读可改（审批通过/拒绝）
 ```
 
-**按操作类型配置说明：**
+**配置流程说明：**
+1. **配置期**：开发者定义 `data_rules` 中的规则（如 rule_self_only、rule_dept_only 等）
+2. **运行期**：管理员创建角色时，为每个实体选择适用的数据规则
+3. **操作类型**：按 READ/WRITE 区分只读或读写权限
+
+**按操作类型配置示例：**
 
 | 场景 | 配置方式 | 示例 |
 |------|----------|------|

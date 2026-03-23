@@ -5,11 +5,23 @@
 ### 1.1 页面级权限 (Page)
 
 ```yaml
-# 功能权限配置 DSL（应用级别，每个应用独立一份）
+# 功能权限配置 DSL（应用配置期生成，应用运行期分配）
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  生成阶段：应用配置期（Config Space）                            │
+# │  - 使用方：应用开发者、页面设计师                                 │
+# │  - 操作：在页面设计器中设计页面、添加按钮、定义字段                │
+# │  - 输出：本 DSL 文件，描述该应用有哪些功能权限项可用               │
+# │                                                                 │
+# │  分配阶段：应用运行期（Runtime）                                 │
+# │  - 使用方：运营管理员、权限管理员                                 │
+# │  - 操作：基于本 DSL 中的权限码，创建角色并分配给角色               │
+# │  - 存储：角色-权限绑定关系存入权限服务数据库                       │
+# └─────────────────────────────────────────────────────────────────┘
+
 app_id: "app_crm"                    # 应用唯一标识（租户键），所有权限资源按此隔离
 
 pages:
-  - code: "page_dashboard"           # 权限码：在同一 app_id 下唯一
+  - code: "page_dashboard"           # 权限码：在同一 app_id 下唯一，运行期分配给角色的依据
     name: "仪表盘"                    # 显示名称
     type: "page"                     # 类型：page | menu
     path: "/dashboard"               # 路由路径
@@ -133,19 +145,41 @@ apis:
 
 ## 2. 权限继承与合并
 
-### 2.1 角色权限继承
+### 2.1 角色权限继承（应用运行期配置）
 
 ```yaml
+# 角色权限配置（应用运行期 Runtime）
+# - 使用方：运营管理员、权限管理员
+# - 数据来源：基于配置期生成的 pages/buttons/fields/apis 中的 code 进行分配
+# - 操作：创建角色，勾选该角色拥有的权限码
+
 roles:
   - code: "role_sales_manager"
     name: "销售经理"
     source: "template:role_manager"   # 继承模板
     extends:
       functional:
-        add:                          # 额外添加的权限
+        add:                          # 从上方 pages/buttons/fields/apis 中选取的权限码
+          - "page_dashboard"          # 页面权限
+          - "page_order_list"
+          - "btn_order_create"        # 按钮权限
+          - "btn_order_edit"
           - "btn_order_delete"
-        remove:                       # 移除的权限
+          - "field_order_amount"      # 字段权限（可见）
+          - "api_order_list"          # API权限
+          - "api_order_create"
+        remove:                       # 从继承的模板中移除的权限
           - "btn_order_export"
+
+  - code: "role_sales_rep"
+    name: "销售代表"
+    source: "template:role_viewer"
+    extends:
+      functional:
+        add:
+          - "page_order_list"
+          - "btn_order_view"          # 仅查看，无编辑权限
+          - "field_order_amount"      # 可见但不可编辑（需配合字段级 editable 配置）
 
   - code: "role_finance"
     name: "财务"
@@ -156,7 +190,10 @@ roles:
           - "field_cost_price"        # 财务角色额外拥有成本价字段权限
 ```
 
-> **注意**：字段可见性统一通过权限码控制，不使用 `visible_roles` 直接绑定角色名。所有权限分配均在运行时角色配置中完成，保持权限检查逻辑的一致性。
+> **配置流程说明**：
+> 1. **配置期**：开发者设计页面时，系统自动生成 `pages`、`buttons`、`fields`、`apis` 中的权限码
+> 2. **运行期**：管理员创建角色时，从上述权限码列表中勾选分配给该角色的权限
+> 3. **字段可见性**：统一通过权限码控制，不使用 `visible_roles` 直接绑定角色名，保持权限检查逻辑的一致性
 
 ### 2.2 多角色权限合并规则
 
