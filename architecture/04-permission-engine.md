@@ -356,8 +356,8 @@ public class PermissionRateLimiter {
     /**
      * 检查是否超过限流阈值
      */
-    public boolean isAllowed(String userId, String apiCode, RateLimitConfig config) {
-        String key = String.format("ratelimit:%s:%s", userId, apiCode);
+    public boolean isAllowed(String appId, String userId, String apiCode, RateLimitConfig config) {
+        String key = String.format("ratelimit:%s:%s:%s", appId, userId, apiCode);
         
         Long current = redisTemplate.opsForValue().increment(key);
         
@@ -372,8 +372,8 @@ public class PermissionRateLimiter {
     /**
      * 获取剩余配额
      */
-    public long getRemainingQuota(String userId, String apiCode, RateLimitConfig config) {
-        String key = String.format("ratelimit:%s:%s", userId, apiCode);
+    public long getRemainingQuota(String appId, String userId, String apiCode, RateLimitConfig config) {
+        String key = String.format("ratelimit:%s:%s:%s", appId, userId, apiCode);
         String value = redisTemplate.opsForValue().get(key);
         
         if (value == null) {

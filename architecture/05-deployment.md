@@ -8,37 +8,30 @@
 │                                                                         │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                     Ingress Controller                           │   │
-│  │              (路由分发: /designer/* 和 /app/{id}/*)              │   │
-│  │                                                                  │   │
-│  │   域名: designer.lowcode-platform.com                           │   │
-│  │         app-{id}.lowcode-platform.com                           │   │
+│  │   designer.lowcode-platform.com  /  app-{id}.lowcode-platform.com│   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                              ↓                                          │
-│  ┌─────────────────────────┐    ┌─────────────────────────────────┐    │
-│  │   页面设计器服务         │    │        应用运行服务群            │    │
-│  │   (Designer Service)    │    │   (多个应用实例，独立域名)        │    │
-│  │   Replicas: 3           │    │                                 │    │
-│  │                         │    │  ┌─────────┐ ┌─────────┐       │    │
-│  │  - 权限配置面板          │    │  │  App-1  │ │  App-2  │ ...   │    │
-│  │  - DSL生成器            │    │  │ (Pod×2) │ │ (Pod×2) │       │    │
-│  │  - 配置存储             │    │  └─────────┘ └─────────┘       │    │
-│  │                         │    │       ↓                         │    │
-│  │   ConfigMap:            │    │  ┌─────────────────────────┐    │    │
-│  │   - permission-dsl      │    │  │   运行时权限引擎        │    │    │
-│  └─────────────────────────┘    │  │   (Sidecar模式)         │    │    │
-│                                 │  │   - 权限校验API         │    │    │
-│  ┌─────────────────────────┐    │  │   - 数据权限拦截器       │    │    │
-│  │   权限服务集群           │    │  │   - 脱敏处理器          │    │    │
-│  │   (Permission Service)  │    │  └─────────────────────────┘    │    │
-│  │   Replicas: 3           │    └─────────────────────────────────┘    │
-│  │   Service: permission   │                                           │
-│  │                         │                                           │
-│  │  - 权限管理API          │                                           │
-│  │  - 角色管理API          │                                           │
-│  │  - DSL解析器            │                                           │
-│  │  - 规则引擎             │                                           │
-│  └─────────────────────────┘                                           │
-│           ↓                                                             │
+│  ┌──────────────────────────┐   ┌──────────────────────────────────┐   │
+│  │   页面设计器服务          │   │  权限管理服务（唯一后端，共享）    │   │
+│  │   (Designer Service)     │   │  (Permission Service)            │   │
+│  │   Replicas: 3            │   │  Replicas: 3                     │   │
+│  │                          │   │                                  │   │
+│  │  - 权限配置面板           │   │  - 权限/角色 CRUD API            │   │
+│  │  - DSL 生成与发布         │   │  - 运行时权限校验 API            │   │
+│  └──────────────────────────┘   │  - 数据权限规则引擎              │   │
+│                                 │  - 脱敏处理器                    │   │
+│                                 │  - app_id 多租户隔离             │   │
+│                                 └──────────────────────────────────┘   │
+│                                           ↑                             │
+│                            HTTP  X-App-Id: {appId}                      │
+│                                           │                             │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                  用户应用层（运行态）                             │   │
+│  │                                                                  │   │
+│  │   App-1 (Pod×N)   App-2 (Pod×N)   App-3 (Pod×N)   ...          │   │
+│  │   各应用无独立权限后端，统一调用权限管理服务，通过 app_id 隔离    │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                         共享存储层                               │   │
 │  │                                                                  │   │
@@ -46,11 +39,10 @@
 │  │  │  MySQL      │  │  Redis      │  │  Elasticsearch          │  │   │
 │  │  │  (主从集群)  │  │  (哨兵模式)  │  │  (3节点集群)             │  │   │
 │  │  │  权限配置    │  │  权限缓存    │  │  审计日志                │  │   │
-│  │  │  StatefulSet│  │  StatefulSet│  │  StatefulSet            │  │   │
+│  │  │  行级 app_id │  │  key前缀    │  │  StatefulSet            │  │   │
+│  │  │  StatefulSet│  │  app_id隔离 │  │                         │  │   │
 │  │  └─────────────┘  └─────────────┘  └─────────────────────────┘  │   │
-│  │                                                                  │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -66,13 +58,21 @@
 | 权限校验 | 运行时权限校验 | `/api/v1/check/**` |
 | DSL 解析 | 权限 DSL 解析 | `/api/v1/dsl/**` |
 
-### 2.2 应用运行时 (app-runtime)
+### 2.2 用户应用接入 (app runtime)
+
+运行时应用无需部署独立权限后端，统一调用共享权限管理服务。
 
 | 组件 | 部署方式 | 说明 |
 |------|----------|------|
-| 业务应用 | Deployment | 用户发布的应用 |
-| 权限 Sidecar | Sidecar | 与应用同 Pod 部署 |
-| 配置初始化 | InitContainer | 加载权限配置 |
+| 用户应用 | Deployment | 用户发布的应用，无权限 Sidecar |
+| 权限管理服务 | 共享服务 | 所有应用通过 HTTP 调用，携带 X-App-Id 头 |
+
+**请求规范：**
+
+| 请求头 | 说明 | 示例 |
+|--------|------|------|
+| `X-App-Id` | 应用唯一标识（租户键） | `app_crm` |
+| `X-User-Id` | 当前用户ID | `user_123` |
 
 ## 3. 配置文件
 
@@ -119,10 +119,22 @@ data:
         retention-days: 90
 ```
 
-### 3.2 Sidecar 配置
+### 3.2 应用接入配置
+
+运行时应用无需部署权限 Sidecar，通过 HTTP 调用共享权限管理服务。
 
 ```yaml
-# permission-sidecar.yaml
+# 应用侧权限配置（application.yml）
+permission:
+  service-url: http://permission-service:8080   # 共享权限管理服务地址
+  app-id: ${APP_ID}                             # 当前应用 ID，由环境变量注入
+  timeout: 500ms
+  cache:
+    local-ttl: 30s     # 本地短暂缓存，减少远程调用；主缓存在权限服务侧（Redis）
+```
+
+```yaml
+# 用户应用 Deployment（无权限 Sidecar）
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -131,33 +143,29 @@ spec:
   replicas: 2
   template:
     spec:
-      initContainers:
-        - name: permission-init
-          image: permission-sidecar:latest
-          command: ['sh', '-c', 'permission-init --app-id={{appId}}']
-          volumeMounts:
-            - name: permission-config
-              mountPath: /etc/permission
-      
       containers:
         - name: app
           image: app-runtime:latest
-          volumeMounts:
-            - name: permission-config
-              mountPath: /etc/permission
-              readOnly: true
-        
-        - name: permission-sidecar
-          image: permission-sidecar:latest
           env:
             - name: APP_ID
-              value: "{{appId}}"
+              value: "{appId}"
             - name: PERMISSION_SERVICE_URL
               value: "http://permission-service:8080"
-      
-      volumes:
-        - name: permission-config
-          emptyDir: {}
+```
+
+**SDK 调用示例（应用侧）：**
+
+```java
+// 功能权限校验
+PermissionClient client = PermissionClient.builder()
+    .serviceUrl(permissionServiceUrl)
+    .appId(appId)        // 租户 ID
+    .build();
+
+boolean allowed = client.checkFunctional(userId, permissionCode);
+
+// 数据权限（返回 SQL 条件片段，由应用拼入查询）
+DataFilter filter = client.getDataFilter(userId, entityCode);
 ```
 
 ## 4. 网络策略
@@ -253,7 +261,6 @@ spec:
 | permission-service | 500m | 2000m | 1Gi | 4Gi |
 | designer-service | 300m | 1000m | 512Mi | 2Gi |
 | app-runtime | 200m | 500m | 256Mi | 1Gi |
-| permission-sidecar | 100m | 200m | 128Mi | 256Mi |
 
 ## 6. 监控与日志
 

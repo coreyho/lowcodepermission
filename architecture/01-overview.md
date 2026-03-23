@@ -24,10 +24,17 @@
 │  │  • 页面设计器  • 实体设计器  • 流程设计器            │   │
 │  │  • 权限配置面板  • 应用发布管理                      │   │
 │  └─────────────────────────────────────────────────────┘   │
-│                          ↓ 发布                             │
+│                          ↓ 发布（写入权限管理服务）           │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │              应用运行空间 (App Runtime)              │   │
-│  │  • 独立URL访问  • 运行时权限引擎  • 数据隔离         │   │
+│  │  • 独立URL访问  • 调用权限管理服务（HTTP）            │   │
+│  │  • 携带 app_id 区分租户，无独立权限后端               │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                          ↑ HTTP (X-App-Id 请求头)           │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │         权限管理服务 (Permission Service)            │   │
+│  │  • 唯一后端权限服务  • 所有应用共享                   │   │
+│  │  • 按 app_id 隔离权限数据（页面/按钮/字段/规则/角色） │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -36,9 +43,11 @@
 
 | 概念 | 说明 |
 |------|------|
+| **app_id** | 应用唯一标识，作为租户键；所有权限资源（页面/按钮/字段/规则/角色）均以 app_id 为命名空间隔离，DSL 和数据库表均以此区分应用 |
 | **App Config Space** | 应用配置期空间，开发者配置权限模板 |
-| **App Runtime** | 应用运行期空间，运营管理员配置具体权限 |
-| **Permission Code** | 权限码，全局唯一标识一个权限点 |
+| **App Runtime** | 应用运行期空间，运营管理员配置具体权限；无独立权限后端，调用共享权限管理服务 |
+| **Permission Service** | 唯一的后端权限管理服务，多应用共享，按 app_id 实现数据隔离 |
+| **Permission Code** | 权限码，在同一 app_id 内唯一标识一个权限点 |
 | **Role Template** | 角色模板，配置期定义，运行期继承 |
 | **Data Dimension** | 数据权限维度（组织/部门/Owner等） |
 | **Data Rule** | 数据权限规则表达式 |
@@ -93,6 +102,55 @@
 | 权限引擎 | 自研 | 基于 Spring Boot 3 |
 | 规则引擎 | QLExpress / Drools | 数据权限表达式计算 |
 | SQL解析 | JSqlParser | 动态修改SQL |
-| 缓存 | Redis | 权限缓存 |
-| 数据库 | MySQL 8 | 权限配置存储 |
+| 缓存 | Redis | 权限缓存，key 格式：`perm:{appId}:{userId}` |
+| 数据库 | MySQL 8 | 权限配置存储，所有权限表均含 `app_id` 列 |
 | 搜索引擎 | Elasticsearch | 审计日志 |
+
+## 6. 多租户隔离设计
+
+运行时只有一个共享权限管理服务，所有应用（租户）通过 `app_id` 隔离权限数据。
+
+### 6.1 数据库表隔离（行级）
+
+所有权限表均以 `app_id` 作为第一分区键：
+
+```sql
+-- 示例：功能权限表（页面/按钮/字段/API 同理）
+CREATE TABLE perm_page (
+  id        BIGINT       NOT NULL AUTO_INCREMENT,
+  app_id    VARCHAR(64)  NOT NULL COMMENT '应用唯一标识（租户键）',
+  code      VARCHAR(128) NOT NULL COMMENT '权限码，同一应用内唯一',
+  name      VARCHAR(128) NOT NULL,
+  -- ...其他字段...
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_app_code (app_id, code),  -- 联合唯一，不同应用可有同名权限码
+  KEY idx_app_id (app_id)
+) COMMENT = '页面级权限';
+
+-- 角色表
+CREATE TABLE perm_role (
+  id        BIGINT       NOT NULL AUTO_INCREMENT,
+  app_id    VARCHAR(64)  NOT NULL COMMENT '应用唯一标识（租户键）',
+  code      VARCHAR(128) NOT NULL,
+  name      VARCHAR(128) NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_app_code (app_id, code),
+  KEY idx_app_id (app_id)
+);
+```
+
+### 6.2 Redis 缓存隔离（key 前缀）
+
+| 缓存类型 | Key 格式 | 说明 |
+|----------|----------|------|
+| 用户功能权限 | `perm:{appId}:{userId}` | 按应用 + 用户缓存权限码集合 |
+| API 限流计数 | `ratelimit:{appId}:{userId}:{apiCode}` | 按应用隔离限流状态 |
+
+### 6.3 DSL 顶层字段
+
+配置期生成的权限 DSL 文件顶层必须携带 `app_id`，发布时作为导入键，权限管理服务以此归属所有资源：
+
+```yaml
+app_id: "app_crm"          # 必填，应用唯一标识
+version: "1.0.0"           # DSL 版本，用于变更追踪
+```

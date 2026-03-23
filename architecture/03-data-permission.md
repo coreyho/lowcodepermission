@@ -5,6 +5,9 @@
 ### 1.1 维度类型定义
 
 ```yaml
+# 数据权限配置 DSL（应用级别，每个应用独立一份）
+app_id: "app_crm"                    # 应用唯一标识（租户键）
+
 data_permissions:
   dimensions:
     - code: "dim_org"
@@ -234,12 +237,13 @@ WHERE (created_by = 'user_1') OR (dept_id = 'dept_1')
 
 ```java
 public DataPermissionResult calculateDataPermission(
+        String appId,
         String userId,
         String entityCode,
         PermissionContext context) {
 
-    // 1. 获取用户所有角色
-    List<Role> roles = roleService.getUserRoles(userId);
+    // 1. 获取用户所有角色（按 app_id 隔离）
+    List<Role> roles = roleService.getUserRoles(appId, userId);
 
     // 2. 检查无限制策略（必须在过滤实体规则之前）
     // strategy=all 的角色不绑定具体实体规则，过滤后列表中不会出现，需提前检查角色级别策略

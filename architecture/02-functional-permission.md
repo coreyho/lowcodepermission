@@ -5,8 +5,11 @@
 ### 1.1 页面级权限 (Page)
 
 ```yaml
+# 功能权限配置 DSL（应用级别，每个应用独立一份）
+app_id: "app_crm"                    # 应用唯一标识（租户键），所有权限资源按此隔离
+
 pages:
-  - code: "page_dashboard"           # 权限码：唯一标识
+  - code: "page_dashboard"           # 权限码：在同一 app_id 下唯一
     name: "仪表盘"                    # 显示名称
     type: "page"                     # 类型：page | menu
     path: "/dashboard"               # 路由路径
@@ -177,7 +180,7 @@ boolean hasPermission = userPermissions.contains(permissionCode);
 └──────┬──────┘
        ↓
 ┌─────────────┐     ┌──────────────────────┐
-│ 解析权限码   │────→│  查询缓存 (Redis)     │ cache key: perm:{userId}
+│ 解析权限码   │────→│  查询缓存 (Redis)     │ cache key: perm:{appId}:{userId}
 │             │     │  TTL: 5分钟           │
 └──────┬──────┘     └──────────┬───────────┘
        │                        │
