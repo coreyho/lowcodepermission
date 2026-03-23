@@ -93,7 +93,16 @@ data_rules:
     entity: "order"
     type: "template"
     template: "rule_dept_and_sub"    # 引用模板
+    operations: ["READ"]             # 操作类型：READ（只读）、WRITE（读写）
+                                     # 不指定则默认 ["READ", "WRITE"]
 ```
+
+**操作类型说明：**
+
+| 类型 | 说明 | 对应 SQL 操作 |
+|------|------|---------------|
+| `READ` | 只读权限 | SELECT |
+| `WRITE` | 读写权限 | INSERT, UPDATE, DELETE |
 
 ### 3.2 字段规则
 
@@ -113,6 +122,7 @@ data_rules:
         operator: "GT"
         value: 100000
     logic: "AND"                      # AND | OR
+    operations: ["READ"]              # 仅允许查看，不允许修改
 ```
 
 **支持的操作符：**
@@ -143,6 +153,7 @@ data_rules:
     expression: "region_code IN ('BJ', 'TJ', 'HEB') AND created_by IN (${userIds})"
     parameters:
       userIds: ["user_001", "user_002", "user_003"]
+    operations: ["READ", "WRITE"]     # 可读可写
 ```
 
 ## 4. 角色数据权限配置
@@ -179,10 +190,30 @@ roles:
         rules:
           - entity: "order"           # 实体编码
             rule: "rule_self_only"    # 规则编码
-            
+            operations: ["READ", "WRITE"]  # 操作类型
+
           - entity: "customer"
             rule: "rule_dept_only"
+            operations: ["READ"]       # 仅查看客户，不允许修改
+
+  - code: "role_finance_auditor"
+    name: "财务审核"
+    permissions:
+      data:
+        strategy: "rule_based"
+        rules:
+          - entity: "order"
+            rule: "rule_pending_audit"    # 待审核订单
+            operations: ["READ", "WRITE"]  # 可读可改（审批通过/拒绝）
 ```
+
+**按操作类型配置说明：**
+
+| 场景 | 配置方式 | 示例 |
+|------|----------|------|
+| 仅查看 | `operations: ["READ"]` | 销售代表查看订单，但不能修改 |
+| 可查看可修改 | `operations: ["READ", "WRITE"]` 或不指定 | 销售经理管理订单 |
+| 仅修改指定范围 | 多个规则组合 | 财务只能修改待审状态的订单 |
 
 ## 5. 数据权限生效机制
 
@@ -199,9 +230,10 @@ roles:
 │   ┌─────────────────────────────────────────────────────┐   │
 │   │ 1. 解析SQL (JSqlParser)                              │   │
 │   │ 2. 获取实体映射 (orders → order)                     │   │
-│   │ 3. 查询用户数据规则                                   │   │
-│   │ 4. 构建权限条件表达式                                 │   │
-│   │ 5. 注入WHERE子句                                     │   │
+│   │ 3. 识别操作类型（SELECT/INSERT/UPDATE/DELETE → R/W）  │   │
+│   │ 4. 查询用户数据规则（按操作类型过滤）                 │   │
+│   │ 5. 构建权限条件表达式                                 │   │
+│   │ 6. 注入WHERE子句                                     │   │
 │   └─────────────────────────────────────────────────────┘   │
 │        ↓                                                     │
 │   处理后SQL: SELECT * FROM orders                            │
@@ -210,6 +242,15 @@ roles:
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**SQL 操作类型映射：**
+
+| SQL 类型 | 操作类型 | 说明 |
+|----------|----------|------|
+| SELECT | READ | 查询操作 |
+| INSERT | WRITE | 新增操作 |
+| UPDATE | WRITE | 更新操作 |
+| DELETE | WRITE | 删除操作 |
 
 ### 5.1.1 角色数据策略查询说明
 
@@ -240,26 +281,27 @@ public DataPermissionResult calculateDataPermission(
         String appId,
         String userId,
         String entityCode,
+        OperationType operationType,    // READ / WRITE
         PermissionContext context) {
 
     // 1. 获取用户所有角色（按 app_id 隔离）
     List<Role> roles = roleService.getUserRoles(appId, userId);
 
     // 2. 检查无限制策略（必须在过滤实体规则之前）
-    // strategy=all 的角色不绑定具体实体规则，过滤后列表中不会出现，需提前检查角色级别策略
     boolean hasAllAccess = roles.stream()
-        .anyMatch(r -> r.getDataStrategy(entityCode) == DataStrategy.ALL);
+        .anyMatch(r -> r.getDataStrategy(entityCode, operationType) == DataStrategy.ALL);
     if (hasAllAccess) {
         return DataPermissionResult.noRestriction();
     }
 
-    // 3. 收集当前实体的数据规则（仅 rule_based / custom 策略）
+    // 3. 收集当前实体的数据规则（按操作类型过滤）
     List<DataRule> rules = roles.stream()
         .flatMap(r -> r.getDataRules().stream())
         .filter(r -> r.getEntity().equals(entityCode))
+        .filter(r -> r.hasOperation(operationType))  // 匹配操作类型
         .collect(Collectors.toList());
 
-    // 4. 无规则时拒绝访问（对应 strategy=none 的角色）
+    // 4. 无规则时拒绝访问
     if (rules.isEmpty()) {
         return DataPermissionResult.noAccess();
     }
@@ -269,6 +311,23 @@ public DataPermissionResult calculateDataPermission(
 
     return DataPermissionResult.withFilter(combinedExpression);
 }
+```
+
+**操作类型匹配逻辑：**
+
+```java
+// DataRule.hasOperation 实现
+public boolean hasOperation(OperationType type) {
+    // 未指定 operations 则默认拥有 READ + WRITE
+    if (this.operations == null || this.operations.isEmpty()) {
+        return true;
+    }
+    return this.operations.contains(type);
+}
+
+// WRITE 权限隐含 READ 权限
+// 示例：若用户有 WRITE 规则，则 READ 操作也允许
+// 实际实现时，配置 WRITE 自动包含 READ，或查询时同时匹配 WRITE 规则
 ```
 
 ## 6. 运行时数据权限管理
@@ -290,14 +349,18 @@ public DataPermissionResult calculateDataPermission(
 │  └─────────────┘  └───────────────────────────────────────┘  │
 │                                                              │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │                   角色数据权限矩阵                      │  │
+│  │                角色数据权限矩阵（按操作类型）            │  │
 │  │                                                       │  │
-│  │  角色 \ 实体    │  订单  │  客户  │  报表  │           │  │
-│  │  ──────────────┼───────┼───────┼───────┤           │  │
-│  │  销售经理      │  部门+子 │  部门  │  全部  │           │  │
-│  │  销售代表      │  本人   │  本人  │  无    │           │  │
-│  │  财务审核      │  待审   │  VIP   │  全部  │           │  │
+│  │  角色 \ 实体    │      订单      │      客户      │  报表  │
+│  │  ──────────────┼────────────────┼────────────────┼───────┤
+│  │               │  R  │   W      │  R  │   W      │  R/W  │
+│  │  ─────────────┼─────┼──────────┼─────┼──────────┼───────┤
+│  │  销售经理     │ 本部门+子 │ 本部门+子  │ 部门  │  本人    │  全部  │
+│  │  销售代表     │  本人   │  本人      │ 本人  │  无      │  无    │
+│  │  财务审核     │  待审   │  待审      │  VIP  │  无      │  全部  │
+│  │  运营分析     │  全部   │  无        │ 全部  │  无      │  全部  │
 │  └───────────────────────────────────────────────────────┘  │
+│  说明：R=READ(只读)  W=WRITE(读写)                          │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
 ```

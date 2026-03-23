@@ -123,27 +123,44 @@ public class DataPermissionInterceptor implements Interceptor {
     public Object intercept(Invocation invocation) throws Throwable {
         MappedStatement ms = (MappedStatement) invocation.getArgs()[0];
         Object parameter = invocation.getArgs()[1];
-        
+
         // 获取当前用户
         String userId = SecurityContext.getCurrentUserId();
         String appId = TenantContext.getCurrentTenant();
-        
+
         // 获取实体类型
         Class<?> entityClass = getEntityClass(ms);
         String entityCode = getEntityCode(entityClass);
-        
-        // 计算数据权限
+
+        // 根据 SQL 类型识别操作类型（READ/WRITE）
+        OperationType operationType = getOperationType(ms);
+
+        // 计算数据权限（传入操作类型）
         DataPermissionResult result = permissionEngine
-            .calculateDataPermission(appId, userId, entityCode, buildContext(parameter));
-        
+            .calculateDataPermission(appId, userId, entityCode, operationType, buildContext(parameter));
+
         // 如果有数据权限限制，修改 SQL
         if (result.hasRestriction()) {
             String originalSql = getOriginalSql(ms, parameter);
             String filteredSql = applyDataFilter(originalSql, result.getFilter());
             return executeWithNewSql(invocation, filteredSql);
         }
-        
+
         return invocation.proceed();
+    }
+
+    /**
+     * 根据 MappedStatement 的 SQL 命令类型判断操作类型
+     * SELECT -> READ
+     * INSERT/UPDATE/DELETE -> WRITE
+     */
+    private OperationType getOperationType(MappedStatement ms) {
+        SqlCommandType commandType = ms.getSqlCommandType();
+        return switch (commandType) {
+            case SELECT -> OperationType.READ;
+            case INSERT, UPDATE, DELETE -> OperationType.WRITE;
+            default -> OperationType.READ;
+        };
     }
     
     private String applyDataFilter(String sql, DataFilter filter) {
