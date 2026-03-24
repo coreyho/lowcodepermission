@@ -23,7 +23,7 @@ content="# 权限码自动生成算法
 │  • 应用管理                  │  • 页面访问 (page_*)               │
 │  • 用户管理                  │  • 按钮操作 (btn_*)                │
 │  • 角色模板管理              │  • 字段可见 (field_*)              │
-│  • 平台配置                  │  • API调用 (api_*)                 │
+│  • 平台配置                  │  • 字段可见 (field_*)              │
 │  • 审计日志查看              │  • 数据规则                        │
 ├─────────────────────────────┴───────────────────────────────────┤
 │  数据库隔离: app_id = "_system"  |  app_id = "app_crm" 等        │
@@ -45,7 +45,6 @@ content="# 权限码自动生成算法
 | **页面** | `page` | `page_{entity}_{action}` | `page_order_list`, `page_dashboard` |
 | **按钮** | `btn` | `btn_{entity}_{action}` | `btn_order_create`, `btn_order_delete` |
 | **字段** | `field` | `field_{entity}_{field_name}` | `field_order_amount`, `field_customer_phone` |
-| **API** | `api` | `api_{entity}_{action}` | `api_order_export`, `api_order_bulk_delete` |
 | **数据规则** | `rule` | `rule_{entity}_{scope}` | `rule_order_dept`, `rule_customer_self` |
 
 #### 平台权限格式（IAM平台本身）
@@ -498,114 +497,7 @@ public class FieldPermissionGenerator {
 }
 ```
 
-### 3.4 API权限生成
-
-```java
-/**
- * API权限码生成
- */
-@Component
-public class ApiPermissionGenerator {
-
-    @Autowired
-    private PermissionCodeGenerator codeGenerator;
-
-    /**
-     * 从API配置生成权限码
-     */
-    public String generate(ApiEndpointConfig config, String appId) {
-        String entity = extractEntityFromPath(config.getPath());
-        String action = extractActionFromApi(config);
-
-        return codeGenerator.generate("api", entity, action,
-            GenerateOptions.builder()
-                .appId(appId)
-                .sourceId(config.getId())
-                .build());
-    }
-
-    /**
-     * 从HTTP方法和路径推断动作
-     */
-    private String extractActionFromApi(ApiEndpointConfig config) {
-        String method = config.getMethod().toUpperCase();
-        String path = config.getPath();
-
-        // RESTful映射
-        switch (method) {
-            case "GET":
-                if (path.contains("list") || path.contains("search")) {
-                    return "list";
-                }
-                if (path.endsWith("/{id}") || path.contains("detail")) {
-                    return "detail";
-                }
-                return "get";
-
-            case "POST":
-                if (path.contains("export")) {
-                    return "export";
-                }
-                if (path.contains("import")) {
-                    return "import";
-                }
-                if (path.contains("batch")) {
-                    return "batch_create";
-                }
-                if (path.contains("approve")) {
-                    return "approve";
-                }
-                return "create";
-
-            case "PUT":
-            case "PATCH":
-                return "update";
-
-            case "DELETE":
-                if (path.contains("batch")) {
-                    return "batch_delete";
-                }
-                return "delete";
-
-            default:
-                return "execute";
-        }
-    }
-
-    private String extractEntityFromPath(String path) {
-        // /api/orders -> order
-        // /api/customer-profiles -> customer_profile
-        String[] segments = path.split("/");
-        for (String segment : segments) {
-            if (segment.isEmpty() || segment.startsWith("{") ||
-                segment.equals("api") || segment.equals("v1") || segment.equals("v2")) {
-                continue;
-            }
-            // 处理复数转单数
-            return singularize(segment.replace("-", "_"));
-        }
-        return "unnamed";
-    }
-
-    /**
-     * 简单的复数转单数
-     */
-    private String singularize(String word) {
-        if (word.endsWith("ies")) {
-            return word.substring(0, word.length() - 3) + "y";
-        }
-        if (word.endsWith("es") && !word.endsWith("sses")) {
-            return word.substring(0, word.length() - 2);
-        }
-        if (word.endsWith("s") && !word.endsWith("ss")) {
-            return word.substring(0, word.length() - 1);
-        }
-        return word;
-    }
-}
-```
-
-### 3.5 平台权限生成（IAM平台自管理）
+### 3.4 平台权限生成（IAM平台自管理）
 
 平台权限用于管理低代码平台本身的功能，采用固定的 `sys_` 前缀，直接存入 `app_id = "_system"` 的命名空间。
 
@@ -700,7 +592,7 @@ public class PlatformPermissionGenerator {
 | 维度 | 平台权限 (Platform) | 应用权限 (App) |
 |------|---------------------|----------------|
 | **app_id** | `_system` | `app_crm`, `app_erp` 等 |
-| **前缀** | `sys_{module}` | `page`, `btn`, `field`, `api` |
+| **前缀** | `sys_{module}` | `page`, `btn`, `field` |
 | **管理界面** | IAM平台管理后台 | 各应用的权限管理页面 |
 | **使用者** | 平台管理员 | 应用运营管理员 |
 | **权限范围** | 管理所有应用 | 仅管理当前应用 |
@@ -1008,7 +900,6 @@ generator:
     button: [PREFIX_WITH_PAGE, AUTO_INCREMENT]
     field: [PREFIX_WITH_PAGE, AUTO_INCREMENT]
     page: [AUTO_INCREMENT]
-    api: [AUTO_INCREMENT, USE_HASH_SUFFIX]
 
   # 保留词（禁止使用的code）
   reserved-words:
@@ -1184,11 +1075,11 @@ public class BatchImportService {
 public class PermissionCodeValidator {
 
     /**
-     * 应用权限：page_*, btn_*, field_*, api_*
+     * 应用权限：page_*, btn_*, field_*
      * 平台权限：sys_{module}_*
      */
     private static final Pattern CODE_PATTERN = Pattern.compile(
-        "^((page|btn|field|api)|sys_[a-z]+)_[a-z][a-z0-9_]*$"
+        "^((page|btn|field)|sys_[a-z]+)_[a-z][a-z0-9_]*$"
     );
 
     private static final int MAX_LENGTH = 64;
@@ -1206,7 +1097,7 @@ public class PermissionCodeValidator {
 
             // 格式校验
             if (!CODE_PATTERN.matcher(code).matches()) {
-                errors.add("权限码格式错误，应用权限应为：page|btn|field|api_实体_动作；" +
+                errors.add("权限码格式错误，应用权限应为：page|btn|field_实体_动作；" +
                           "平台权限应为：sys_模块_资源_动作");
             }
 
@@ -1243,8 +1134,7 @@ public class PermissionCodeValidator {
         return code != null && (
             code.startsWith("page_") ||
             code.startsWith("btn_") ||
-            code.startsWith("field_") ||
-            code.startsWith("api_")
+            code.startsWith("field_")
         );
     }
 }
