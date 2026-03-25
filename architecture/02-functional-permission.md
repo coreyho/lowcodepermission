@@ -121,27 +121,7 @@ fields:
 
 > **安全建议**：涉及敏感数据（手机号、身份证、金额等）的脱敏字段必须使用 `masking_side: backend`，在 API 响应序列化阶段完成替换，防止原始数据通过网络传输被抓包获取。`frontend` 模式仅适用于低敏感度的视觉提示场景。
 
-### 1.4 API级权限 (API)
-
-```yaml
-apis:
-  - code: "api_order_list"
-    method: "GET"
-    path: "/api/orders"
-    auto_generated: true             # 自动生成标记
-    
-  - code: "api_order_create"
-    method: "POST"
-    path: "/api/orders"
-    auto_generated: true
-    
-  - code: "api_order_export"
-    method: "POST"
-    path: "/api/orders/export"
-    rate_limit:                      # API限流配置
-      limit: 100
-      window: "1h"
-```
+> **说明**：字段权限（列权限）的完整设计（visible/editable/masking）见《数据权限设计》文档，功能权限仅关注字段的可见性控制。
 
 ## 2. 权限继承与合并
 
@@ -150,7 +130,7 @@ apis:
 ```yaml
 # 角色权限配置（应用运行期 Runtime）
 # - 使用方：运营管理员、权限管理员
-# - 数据来源：基于配置期生成的 pages/buttons/fields/apis 中的 code 进行分配
+# - 数据来源：基于配置期生成的 pages/buttons/fields 中的 code 进行分配
 # - 操作：创建角色，勾选该角色拥有的权限码
 
 roles:
@@ -159,15 +139,13 @@ roles:
     source: "template:role_manager"   # 继承模板
     extends:
       functional:
-        add:                          # 从上方 pages/buttons/fields/apis 中选取的权限码
+        add:                          # 从上方 pages/buttons/fields 中选取的权限码
           - "page_dashboard"          # 页面权限
           - "page_order_list"
           - "btn_order_create"        # 按钮权限
           - "btn_order_edit"
           - "btn_order_delete"
-          - "field_order_amount"      # 字段权限（可见）
-          - "api_order_list"          # API权限
-          - "api_order_create"
+          - "field_order_amount"      # 字段权限（可见性）
         remove:                       # 从继承的模板中移除的权限
           - "btn_order_export"
 
@@ -179,7 +157,7 @@ roles:
         add:
           - "page_order_list"
           - "btn_order_view"          # 仅查看，无编辑权限
-          - "field_order_amount"      # 可见但不可编辑（需配合字段级 editable 配置）
+          - "field_order_amount"      # 字段可见（详细权限控制见数据权限设计）
 
   - code: "role_finance"
     name: "财务"
@@ -187,13 +165,13 @@ roles:
     extends:
       functional:
         add:
-          - "field_cost_price"        # 财务角色额外拥有成本价字段权限
+          - "field_cost_price"        # 财务角色额外拥有成本价字段可见权限
 ```
 
 > **配置流程说明**：
-> 1. **配置期**：开发者设计页面时，系统自动生成 `pages`、`buttons`、`fields`、`apis` 中的权限码
+> 1. **配置期**：开发者设计页面时，系统自动生成 `pages`、`buttons`、`fields` 中的权限码
 > 2. **运行期**：管理员创建角色时，从上述权限码列表中勾选分配给该角色的权限
-> 3. **字段可见性**：统一通过权限码控制，不使用 `visible_roles` 直接绑定角色名，保持权限检查逻辑的一致性
+> 3. **字段可见性**：功能权限层面通过权限码控制字段是否可见，详细的字段权限（可见/可编辑/脱敏）见数据权限设计
 
 ### 2.2 多角色权限合并规则
 

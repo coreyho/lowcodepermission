@@ -422,4 +422,182 @@ test_case:
         created_by: "user_999"
         dept_id: "dept_789"
       expected: false
+
+## 7. 列权限（字段级权限）
+
+列权限控制用户对实体字段的访问能力，与行权限（数据范围）共同构成完整的数据权限体系。
+
+### 7.1 权限维度
+
+| 维度 | 说明 | 控制粒度 |
+|------|------|----------|
+| **可见性 (Visible)** | 能否看到字段值 | 字段级别 |
+| **可编辑性 (Editable)** | 能否修改字段值 | 字段级别 |
+| **数据脱敏 (Masking)** | 字段值是否脱敏显示 | 字段级别 |
+
+### 7.2 与功能权限的关系
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     权限体系层级                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  功能权限（控制功能入口）                                    │
+│  ├── 页面权限：能否进入订单详情页                            │
+│  └── 按钮权限：能否点击编辑按钮                              │
+│                                                             │
+│  数据权限（控制数据内容）                                    │
+│  ├── 行权限：能看到哪些订单记录（本部门/本人等）              │
+│  └── 列权限：能看到订单的哪些字段（金额/成本价等）            │
+│      ├── visible：字段是否可见                              │
+│      ├── editable：字段是否可编辑                           │
+│      └── masking：字段是否脱敏                              │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**配置位置：**
+- 功能权限（02-functional-permission.md）：配置字段是否对角色可见（通过权限码控制）
+- 数据权限（本文档）：配置字段的可编辑性和脱敏规则
+
+### 7.3 列权限配置模型
+
+```yaml
+# 列权限配置（应用运行期）
+roles:
+  - code: "role_sales_rep"
+    name: "销售代表"
+    column_permissions:          # 列权限（字段级权限）
+      - entity: "order"
+        fields:
+          - field_code: "field_amount"
+            visible: true        # 可见（功能权限已授权）
+            editable: false      # 不可编辑（只读）
+            masking:
+              enabled: true      # 脱敏显示
+              type: "partial"
+
+          - field_code: "field_cost_price"
+            visible: false       # 不可见（功能权限未授权）
+
+  - code: "role_finance"
+    name: "财务"
+    column_permissions:
+      - entity: "order"
+        fields:
+          - field_code: "field_amount"
+            visible: true
+            editable: true       # 财务可编辑金额
+            masking:
+              enabled: false     # 财务看不脱敏
+
+          - field_code: "field_cost_price"
+            visible: true        # 财务可见成本价
+            editable: false
+```
+
+### 7.4 多角色权限合并
+
+```java
+/**
+ * 列权限合并规则
+ */
+public FieldPermission mergeColumnPermissions(List<FieldPermission> permissions) {
+    // 1. 可见性：功能权限层面已控制，数据权限只处理可见字段
+    boolean visible = permissions.stream()
+        .anyMatch(p -> p.isVisible());
+
+    // 2. 可编辑性：所有角色都可编辑才可编辑
+    boolean editable = visible && permissions.stream()
+        .allMatch(p -> p.isEditable());
+
+    // 3. 脱敏：任一角色需要脱敏则脱敏（取最严格）
+    MaskingConfig masking = permissions.stream()
+        .filter(p -> p.getMasking() != null && p.getMasking().isEnabled())
+        .map(FieldPermission::getMasking)
+        .max(Comparator.comparing(MaskingConfig::getLevel))
+        .orElse(MaskingConfig.none());
+
+    return FieldPermission.builder()
+        .visible(visible)
+        .editable(editable)
+        .masking(masking)
+        .build();
+}
+```
+
+### 7.5 列权限生效机制
+
+列权限在 API 响应阶段生效：
+
+```java
+@RestControllerAdvice
+public class ColumnPermissionResponseAdvice implements ResponseBodyAdvice<Object> {
+
+    @Autowired
+    private ColumnPermissionService columnPermissionService;
+
+    @Override
+    public Object beforeBodyWrite(Object body, MethodParameter returnType,
+                                  MediaType selectedContentType,
+                                  Class<? extends HttpMessageConverter<?>> selectedConverterType,
+                                  ServerHttpRequest request, ServerHttpResponse response) {
+
+        if (!(body instanceof Result)) {
+            return body;
+        }
+
+        Result<?> result = (Result<?>) body;
+        if (result.getData() == null) {
+            return body;
+        }
+
+        // 获取实体注解
+        EntityResponse entityAnnotation = returnType.getMethodAnnotation(EntityResponse.class);
+        if (entityAnnotation == null) {
+            return body;
+        }
+
+        String entityCode = entityAnnotation.value();
+        String appId = TenantContext.getCurrentTenant();
+        String userId = SecurityContext.getCurrentUserId();
+
+        // 获取列权限
+        Map<String, FieldPermission> columnPermissions = columnPermissionService
+            .getFieldPermissions(appId, userId, entityCode);
+
+        // 过滤和脱敏处理
+        Object filteredData = applyColumnPermissions(result.getData(), columnPermissions);
+        result.setData(filteredData);
+
+        return body;
+    }
+}
+```
+
+### 7.6 完整数据权限示意图
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         订单表 (order)                          │
+├──────────┬──────────┬──────────┬──────────┬─────────────────────┤
+│   id     │ customer │  amount  │ cost_    │    created_by       │
+│          │          │          │ price    │                     │
+├──────────┼──────────┼──────────┼──────────┼─────────────────────┤
+│  1001    │  张三    │  ¥5000   │  ¥3000   │    user_001         │  ← 行权限控制
+│  1002    │  李四    │  ¥8000   │  ¥4500   │    user_002         │     销售代表只能
+│  1003    │  王五    │  ¥12000  │  ¥7000   │    user_003         │     看到自己的数据
+├──────────┴──────────┴──────────┴──────────┴─────────────────────┤
+│                                                                 │
+│  列权限控制：                                                    │
+│  • 销售代表能看到：id, customer, amount(脱敏), created_by        │
+│    看不到：cost_price                                           │
+│                                                                 │
+│  • 财务能看到：id, customer, amount(不脱敏), cost_price          │
+│    可编辑：amount                                               │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**详细列权限设计参考：** `architecture/07-field-permission.md`
 ```

@@ -63,13 +63,10 @@
 │   ├── 工具栏按钮
 │   ├── 行操作按钮
 │   └── 表单按钮
-├── 字段级 (Field)
-│   ├── 字段可见性
-│   ├── 字段可编辑性
-│   └── 数据脱敏
-└── API级 (API)
-    ├── HTTP方法控制
-    └── 接口路径控制
+└── 字段级 (Field)
+    ├── 字段可见性
+    ├── 字段可编辑性
+    └── 数据脱敏
 
 数据权限层级:
 ├── 组织维度 (Organization)
@@ -88,16 +85,18 @@
 │                                                                         │
 │  使用者：应用开发者 / 页面设计人员                                       │
 │                                                                         │
-│  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐ │
-│  │  设计页面    │   │  配置按钮    │   │  定义字段    │   │  标记API    │ │
-│  │  (Page)     │   │  (Button)   │   │  (Field)    │   │  (API)      │ │
-│  └──────┬──────┘   └──────┬──────┘   └──────┬──────┘   └──────┬──────┘ │
-│         │                 │                 │                 │        │
-│         └─────────────────┴─────────────────┴─────────────────┘        │
-│                                   │                                     │
-│                                   ↓                                     │
-│                    ┌─────────────────────────────┐                     │
-│                    │   生成功能权限配置项 DSL      │                     │
+│  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐ │
+│  │  设计页面    │   │  配置按钮    │   │  定义字段    │ │
+│  │  (Page)     │   │  (Button)   │   │  (Field)    │ │
+│  └──────┬──────┘   └──────┬──────┘   └──────┬──────┘ │
+│         │                 │                 │
+│         └─────────────────┴─────────────────┘
+│                                   │
+│                                   ↓
+│                    ┌─────────────────────────────┐
+│                    │   生成功能权限配置项 DSL      │
+│                    │   （定义有哪些权限可用）       │
+│                    └──────────────┬──────────────┘
 │                    │   （定义有哪些权限可用）       │                     │
 │                    └──────────────┬──────────────┘                     │
 │                                   │                                     │
@@ -155,8 +154,7 @@
 |------------|----------------|----------------|
 | **页面 (Page)** | 页面编码、名称、路由、菜单显示 | 角色勾选可访问的页面 |
 | **按钮 (Button)** | 按钮编码、名称、所属页面、位置 | 角色勾选可操作的功能 |
-| **字段 (Field)** | 字段编码、名称、所属页面、脱敏配置 | 角色勾选可见/可编辑的字段 |
-| **API** | API编码、方法、路径、限流配置 | 角色勾选可调用的接口 |
+| **字段 (Field)** | 字段编码、名称、所属页面 | 角色配置可见/可编辑/脱敏规则 |
 | **数据规则** | 规则编码、表达式、适用实体 | 角色按实体绑定规则（READ/WRITE） |
 
 ## 5. 权限生效流程
@@ -250,8 +248,8 @@ app_export_{app_id}_{version}_{timestamp}.zip
 ├── metadata/
 │   └── app_info.json               # 应用基本信息（名称、描述、图标）
 ├── permissions/
-│   ├── functional_permission.yaml  # 功能权限配置（pages/buttons/fields/apis）
-│   └── data_permission.yaml        # 数据权限配置（dimensions/rules/templates）
+│   ├── functional_permission.yaml  # 功能权限配置（pages/buttons/fields）
+│   └── data_permission.yaml        # 数据权限配置（dimensions/rules/fields）
 ├── entities/
 │   ├── entity_order.json           # 实体定义
 │   └── entity_customer.json
@@ -294,21 +292,8 @@ permissions:
     - code: "field_customer_phone"
       name: "客户电话"
       page_code: "page_order_detail"
-      data_masking:
-        enable: true
-        type: "regex"
-        match_pattern: "(\d{3})\d{4}(\d{4})"
-        replace_with: "$1****$2"
-        masking_side: "backend"
+      # 字段权限在数据权限中定义可见/可编辑/脱敏规则
       # ...
-
-  apis:
-    - code: "api_order_export"
-      method: "POST"
-      path: "/api/orders/export"
-      rate_limit:
-        limit: 100
-        window: "1h"
 ```
 
 **数据权限配置项** (`permissions/data_permission.yaml`)：
@@ -444,7 +429,6 @@ data_permissions:
     "page_count": 12,
     "button_count": 35,
     "field_count": 78,
-    "api_count": 45,
     "data_rule_count": 8,
     "checksum": "sha256:abc123..."     # 校验和，防篡改
   }
@@ -618,7 +602,7 @@ public class AppImportService {
 
 ### 8.9 关键设计原则
 
-1. **权限配置项必导**：pages、buttons、fields、apis、data_rules 等权限配置项必须完整导出，确保目标平台具备相同的权限控制能力
+1. **权限配置项必导**：pages、buttons、fields、data_rules 等权限配置项必须完整导出，确保目标平台具备相同的权限控制能力
 
 2. **角色配置可选导**：运行期的角色-权限绑定关系为可选导出，避免不同平台的角色体系冲突
 
