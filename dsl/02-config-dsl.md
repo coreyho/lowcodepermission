@@ -307,30 +307,46 @@ permission_schema:
         name: "组织维度"
         type: "organization"
         entity_field: "org_id"
-        source: "sys_organization"
-        
+        source_type: "table"
+        source_config:
+          table: "sys_organization"
+
       - code: "dim_dept"
         name: "部门维度"
         type: "department"
         entity_field: "dept_id"
-        source: "sys_department"
-        
+        source_type: "table"
+        source_config:
+          table: "sys_department"
+
       - code: "dim_owner"
         name: "Owner维度"
         type: "owner"
         entity_field: "created_by"
-        
+
       - code: "dim_region"
         name: "区域维度"
         type: "custom"
         entity_field: "region_code"
-        source: "enum_region"
-        
+        source_type: "enum"
+        source_config:
+          values:
+            - code: "BJ"
+              name: "北京"
+            - code: "SH"
+              name: "上海"
+
       - code: "dim_customer_level"
         name: "客户等级维度"
         type: "custom"
         entity_field: "customer_level"
-        source: "enum_customer_level"
+        source_type: "enum"
+        source_config:
+          values:
+            - code: "VIP"
+              name: "VIP客户"
+            - code: "NORMAL"
+              name: "普通客户"
     
     # --------------------
     # 数据规则模板
@@ -341,43 +357,67 @@ permission_schema:
         name: "仅本人数据"
         expression: "created_by == ${currentUserId}"
         description: "只能查看自己创建的数据"
-        
+        param_schema:
+          params: []
+
       - code: "rule_dept_only"
         name: "本部门数据"
         expression: "dept_id == ${currentDeptId}"
         description: "只能查看本部门的数据"
-        
+        param_schema:
+          params: []
+
       - code: "rule_dept_and_sub"
         name: "本部门及子部门"
         expression: "dept_id IN ${currentDeptTree}"
         description: "查看本部门及子部门的数据"
-        
+        param_schema:
+          params: []
+
       - code: "rule_org_only"
         name: "本组织数据"
         expression: "org_id == ${currentOrgId}"
         description: "只能查看本组织的数据"
-        
+        param_schema:
+          params: []
+
       # 业务规则
       - code: "rule_pending_audit"
         name: "待审核数据"
         expression: "status == 'pending_audit'"
         description: "只能查看待审核状态的数据"
-        
+        param_schema:
+          params: []
+
       - code: "rule_region_north"
         name: "华北区数据"
         expression: "region_code IN ('BJ', 'TJ', 'HEB', 'SX')"
         description: "华北区域数据"
-        
+        param_schema:
+          params: []
+
       - code: "rule_vip_customer"
         name: "VIP客户数据"
         expression: "customer_level == 'VIP'"
         description: "VIP客户相关数据"
-        
+        param_schema:
+          params: []
+
       # 自定义规则
       - code: "rule_custom"
         name: "自定义规则"
         expression: ""
         description: "由运营管理员自定义"
+        param_schema:
+          params:
+            - name: "dimension"
+              type: "dimension"
+              required: true
+              label: "数据维度"
+            - name: "operator"
+              type: "enum"
+              required: true
+              options: ["EQ", "IN", "GT", "LT"]
 
   # ========== 角色模板定义 ==========
   role_templates:

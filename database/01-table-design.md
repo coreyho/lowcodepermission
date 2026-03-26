@@ -97,7 +97,60 @@ CREATE TABLE sys_data_dimension (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='数据权限维度表';
 ```
 
-### 1.5 数据权限规则表
+### 1.5 数据规则模板表
+
+```sql
+CREATE TABLE sys_data_rule_template (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+    app_id VARCHAR(64) NOT NULL COMMENT '应用ID，system表示系统内置模板',
+    code VARCHAR(128) NOT NULL COMMENT '模板编码',
+    name VARCHAR(128) NOT NULL COMMENT '模板名称',
+    description TEXT COMMENT '模板说明',
+    expression TEXT COMMENT '规则表达式（支持变量替换，如 ${currentUserId}）',
+    param_schema JSON COMMENT '参数定义（JSON Schema格式，用于界面渲染）',
+    example_params JSON COMMENT '示例参数（用于测试）',
+    priority INT DEFAULT 0 COMMENT '排序优先级',
+    status TINYINT DEFAULT 1 COMMENT '状态: 0禁用 1启用',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    created_by VARCHAR(64) COMMENT '创建人',
+    updated_by VARCHAR(64) COMMENT '更新人',
+
+    UNIQUE KEY uk_app_code (app_id, code),
+    INDEX idx_app_status (app_id, status),
+    INDEX idx_priority (priority)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='数据规则模板表';
+```
+
+**参数定义示例：**
+
+```json
+{
+  "params": [
+    {
+      "name": "dimension",
+      "type": "dimension",           // 维度选择器
+      "required": true,
+      "label": "数据维度"
+    },
+    {
+      "name": "operator",
+      "type": "enum",                // 下拉选择
+      "required": true,
+      "options": ["EQ", "IN", "GT", "LT"],
+      "default": "EQ"
+    },
+    {
+      "name": "value",
+      "type": "context_variable",    // 上下文变量
+      "required": true,
+      "options": ["${currentUserId}", "${currentDeptId}", "${currentOrgId}"]
+    }
+  ]
+}
+```
+
+### 1.6 数据权限规则表
 
 ```sql
 CREATE TABLE sys_data_rule (
@@ -126,7 +179,7 @@ CREATE TABLE sys_data_rule (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='数据权限规则表';
 ```
 
-### 1.6 角色-数据规则关联表
+### 1.7 角色-数据规则关联表
 
 ```sql
 CREATE TABLE sys_role_data_rule (
@@ -367,10 +420,17 @@ CREATE TABLE sys_permission_version (
 │                                        │ 角色权限关联表     │                │
 │                                        └──────────────────┘                │
 │                                                                              │
-│  ┌──────────────────┐         ┌──────────────────┐                          │
-│  │ sys_data_dimension│        │ sys_data_rule    │                          │
-│  │ 数据权限维度表    │         │ 数据权限规则表    │                          │
-│  └──────────────────┘         └────────┬─────────┘                          │
+│  ┌──────────────────┐         ┌─────────────────────┐                       │
+│  │ sys_data_dimension│        │sys_data_rule_template│                      │
+│  │ 数据权限维度表    │         │ 数据规则模板表      │                       │
+│  └──────────────────┘         └─────────┬───────────┘                       │
+│                                         │                                    │
+│                                         │ 1:N                                │
+│                                         ▼                                    │
+│                               ┌──────────────────┐                          │
+│                               │ sys_data_rule    │                          │
+│                               │ 数据权限规则表    │                          │
+│                               └────────┬─────────┘                          │
 │                                         │                                    │
 │                                         │ 1:N                                │
 │                                         ▼                                    │

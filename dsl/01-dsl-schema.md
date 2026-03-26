@@ -193,11 +193,11 @@
             "type": "object",
             "required": ["code", "name", "type"],
             "properties": {
-              "code": { 
+              "code": {
                 "type": "string",
                 "description": "维度编码"
               },
-              "name": { 
+              "name": {
                 "type": "string",
                 "description": "维度名称"
               },
@@ -206,13 +206,18 @@
                 "enum": ["organization", "department", "owner", "custom"],
                 "description": "维度类型"
               },
-              "entity_field": { 
+              "entity_field": {
                 "type": "string",
                 "description": "实体字段名"
               },
-              "source": { 
+              "source_type": {
                 "type": "string",
-                "description": "数据源"
+                "enum": ["table", "enum", "api"],
+                "description": "数据源类型"
+              },
+              "source_config": {
+                "type": "object",
+                "description": "数据源配置"
               }
             }
           }
@@ -225,19 +230,27 @@
             "type": "object",
             "required": ["code", "name"],
             "properties": {
-              "code": { 
+              "code": {
                 "type": "string",
                 "description": "模板编码"
               },
-              "name": { 
+              "name": {
                 "type": "string",
                 "description": "模板名称"
               },
-              "expression": { 
+              "expression": {
                 "type": "string",
                 "description": "规则表达式"
               },
-              "description": { 
+              "param_schema": {
+                "type": "object",
+                "description": "参数定义（JSON Schema格式）"
+              },
+              "example_params": {
+                "type": "object",
+                "description": "示例参数"
+              },
+              "description": {
                 "type": "string",
                 "description": "模板说明"
               }

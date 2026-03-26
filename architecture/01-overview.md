@@ -292,7 +292,10 @@ permissions:
     - code: "field_customer_phone"
       name: "客户电话"
       page_code: "page_order_detail"
-      # 字段权限在数据权限中定义可见/可编辑/脱敏规则
+      # 字段权限说明：
+      # - 可见性：功能权限通过字段权限码控制（谁能看到该字段）
+      # - 可编辑性：在页面设计器中配置字段的编辑权限（谁能编辑）
+      # - 脱敏规则：在字段配置中定义数据脱敏方式（如何显示）
       # ...
 ```
 
@@ -310,11 +313,16 @@ data_permissions:
       name: "组织维度"
       type: "organization"
       entity_field: "org_id"
+      source_type: "table"
+      source_config:
+        table: "sys_organization"
 
   rule_templates:
     - code: "rule_self_only"
       name: "仅本人数据"
       expression: "created_by == ${currentUserId}"
+      param_schema:
+        params: []  # 无参数，直接使用上下文变量
 
   data_rules:
     - id: "rule_dept_and_sub"

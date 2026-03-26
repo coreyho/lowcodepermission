@@ -26,24 +26,36 @@ data_permissions:
       name: "组织维度"
       type: "organization"
       entity_field: "org_id"
-      source: "sys_organization"
-      
+      source_type: "table"
+      source_config:
+        table: "sys_organization"
+
     - code: "dim_dept"
       name: "部门维度"
       type: "department"
       entity_field: "dept_id"
-      source: "sys_department"
-      
+      source_type: "table"
+      source_config:
+        table: "sys_department"
+
     - code: "dim_owner"
       name: "Owner维度"
       type: "owner"
       entity_field: "created_by"
-      
+
     - code: "dim_region"
       name: "区域维度"
       type: "custom"
       entity_field: "region_code"
-      source: "enum_region"
+      source_type: "enum"
+      source_config:
+        values:
+          - code: "BJ"
+            name: "北京"
+          - code: "SH"
+            name: "上海"
+          - code: "GZ"
+            name: "广州"
 ```
 
 ### 1.2 维度说明
@@ -64,22 +76,45 @@ rule_templates:
   - code: "rule_self_only"
     name: "仅本人数据"
     expression: "created_by == ${currentUserId}"
-    
+    param_schema:
+      params: []  # 无参数，直接使用上下文变量
+
   - code: "rule_dept_only"
     name: "本部门数据"
     expression: "dept_id == ${currentDeptId}"
-    
+    param_schema:
+      params: []
+
   - code: "rule_dept_and_sub"
     name: "本部门及子部门"
     expression: "dept_id IN ${currentDeptTree}"
-    
+    param_schema:
+      params: []
+
   - code: "rule_org_only"
     name: "本组织数据"
     expression: "org_id == ${currentOrgId}"
-    
+    param_schema:
+      params: []
+
   - code: "rule_custom"
     name: "自定义规则"
     expression: ""  # 运营管理员填写
+    param_schema:
+      params:
+        - name: "dimension"
+          type: "dimension"
+          required: true
+          label: "数据维度"
+        - name: "operator"
+          type: "enum"
+          required: true
+          options: ["EQ", "IN", "GT", "LT"]
+          default: "EQ"
+        - name: "value"
+          type: "context_variable"
+          required: true
+          options: ["${currentUserId}", "${currentDeptId}", "${currentOrgId}"]
 ```
 
 ### 2.2 上下文变量
